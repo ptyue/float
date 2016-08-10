@@ -1,0 +1,413 @@
+c***********************************************************************
+      subroutine gmshrmsh(mxvert,mxnode,mxelem,mxnbd,mxbdp,ngmx,ncmx,
+     &                    nvertd,nnoded,nelemd,
+     &                    inodd,necd,xold,yold,phi,dist,
+     &                    nvert,nnode,nelem,inod,nec,x,y,
+     &                    nbd,ibdnod,nic,ic,nbound,nside,
+     &                    area,reft,aspr,
+     &                    h1,h2,h3,dG,domsize,
+     &                    leniw,lenrw,iwork,rwork)
+
+c
+c-----------------------------------------------------------------------
+c     This subroutine use Gmsh to remesh the domain. local refinement 
+c        is performed according the input phi field.
+c   Input:
+c        
+c       mxvert,mxnode,mxelem,ngmx,ncmx:
+c                   maximum sizes for arrays and mesh
+c       mxbdp:      maximum number of boundary sections (max of nic)
+c       mxnbd:      maximum number of boundary nodes
+c       nvertd,nnoded,nelemd: 
+c                   old mesh paramters
+c       inodd,necd: inod and nec of the old mesh
+c       xold, yold: old mesh coordinates
+c       phi:        phi field defined on the old mesh
+c       h2,h3>h1:   mesh size at far field and at interface 
+c                   h2 for phi=1, and h3 for phi=-1   
+c       dG:         1<dG<=2. grading control in Gmsh, which is the 
+c                    size ratio between neighboring elements
+c       domsize:    largest length scale of the computational domain
+c       leniw:      length of the integer working array, 
+c                   >=MAX(nelem+nvert,(2+ngmx+ncmx)*nelem)
+c       lenrw:      length of the real(8) working array, >=3*nvert
+c     Output:
+c        nvert,nnode,nelem,nbd,nic:
+c                    new mesh parameters
+c        nbound:     number of close boundaries
+c        inod:       element description table
+c        nec:        neighbouring elements
+c        x,y:        coordinates of nodes
+c        ibdnod:     indices of bounary nodes in the global node list
+c        ic:         starting position of bd secs in ibdnod
+c        nside:      number of sections in each close boundaries
+c        area,reft,aspr:
+c                    area, reference # and aspect ratio of elements
+c     Working arrays:
+c        iwork, rwork, dist
+c-----------------------------------------------------------------------
+c   1/7/2015,   P. Yue
+c-----------------------------------------------------------------------
+      use, intrinsic :: iso_c_binding, only: c_char, c_null_char
+      implicit none
+c
+      intent (in) :: mxvert,mxnode,mxelem,mxnbd,ngmx,ncmx,mxbdp,
+     &               nvertd,nnoded,nelemd,xold,yold,phi,inodd,necd,
+     &               h1,h2,h3,dG,domsize,leniw,lenrw
+      intent (out):: nvert,nnode,nelem,nbd,nic,inod,nec,x,y,ibdnod,ic,
+     &               area,reft,aspr,nbound,nside,iwork,rwork,dist
+c
+      integer mxvert,mxnode,mxelem,mxnbd,mxbdp,ngmx,ncmx,
+     &        nvertd,nnoded,nelemd,nvert,nnode,nelem,nbd,nic,nbound,
+     &        leniw,lenrw
+      integer inodd(ngmx,nelemd),necd(ncmx,nelemd),
+     &        inod(ngmx,mxelem),nec(ncmx,mxelem),ic(mxbdp+1),
+     &        ibdnod(mxnbd),iwork(leniw),reft(mxelem),nside(mxbdp)
+      real(8) h1,h2,h3,dG,domsize
+      real(8) phi(nnoded),xold(nnoded),yold(nnoded),
+     &        x(mxnode),y(mxnode),area(mxelem),aspr(mxelem),
+     &        dist(mxvert),rwork(lenrw)
+c     local variables
+      integer lenepci, lenepcr, lenorder
+c     gmsh related locals
+      integer order,bgm       
+      character(len=100) geofile,bgmfile,geofile_c,bgmfile_c
+      real(8) alpha, s1, s2, s3, maxtime
+c     
+      write(*,'("Remesh invoked!")')
+      geofile="gmsh.geo"
+      bgmfile="gmsh.pos" 
+      geofile_c=trim(geofile)//c_null_char
+      bgmfile_c=trim(bgmfile)//c_null_char      
+      order=2
+      bgm=1      
+c
+      lenepci=mxelem+mxvert
+      lenepcr=3*mxvert
+      lenorder=(2+ncmx+ngmx)*mxelem
+      if(leniw<max(lenepci,lenorder))
+     &  stop 'gmshrmsh: iwork too short (old mesh)'
+      if(lenrw<lenepcr) stop 'gmshrmsh: rwork too short (old mesh)'
+c   compute maxtime for epc
+      alpha=(dG-1)/dG
+      s1=h1*2.5
+      s2=s1+(h2-h1)/alpha
+      s3=-(s1+(h3-h1)/alpha)
+      maxtime=min(domsize,2*max(s2,s3))
+c       compute the distance function based on phi
+      call epc(nvertd, nnoded, nelemd, ngmx, maxtime,
+     &               inodd, phi, xold, yold, dist,
+     &               iwork,rwork,lenepci,lenepcr)
+c   output the signed distance function (debug purpose)
+c      call tecpostgmsh(nnoded,nvertd,nelemd,ngmx,inodd,xold,yold,
+c     &                 phi,dist)        
+
+c       compute element size and store in rwork(1:nvert) 
+      call gmshsize(nvertd,dist,rwork,h1,h2,h3,dG)
+      call writebgm(nvertd,nelemd,ngmx,ncmx,xold,yold,inodd,
+     &     rwork,bgmfile)
+c       generate 2D mesh
+      call gmsh2d(order,bgm,geofile_c,bgmfile_c,ngmx,ncmx,
+     &            mxvert,mxnode,mxelem,mxbdp,mxnbd,
+     &            nvert,nnode,nelem,nic,nbd,nbound, 
+     &            x,y,inod,nec,ic,ibdnod,nside)
+c       reorder mesh elements
+      call mshreorder(nelem,ngmx,ncmx,inod,nec,iwork,lenorder)      
+
+c       compute apspect ratio, etc.          
+      call gmshaspr(nvert,nelem,ngmx,inod,x,y,area,reft,aspr)
+      
+c
+c       obtain signed distance function in a narrow band within 10*h1
+c       from the interface
+c      call epc(nvert, nnode, nelem, ngmx, 10.d0*h1,
+c     &         inod, phi, x, y, dist,
+c     &         iwork,rwork,lenepci,lenepcr)
+c     
+      write(*,'("Vert=",i7,1x,"Node=",i7,1x,"Elem=",i7,1x,"nbd=",i7)')
+     &   nvert,nnode,nelem,nbd
+      end
+
+c***********************************************************************
+      subroutine gmshinitmsh(mxvert,mxnode,mxelem,mxnbd,mxbdp,
+     &                       ngmx,ncmx,nvert,nnode,nelem,
+     &                       inod,nec,x,y,dist,
+     &                       nbd,ibdnod,nic,ic,nbound,nside,
+     &                       area,reft,aspr,
+     &                       flowtype,rd,xd,yd,dropone,eps,
+     &                       h1,h2,h3,dG,domsize,
+     &                       leniw,lenrw,iwork,rwork)
+c
+c-----------------------------------------------------------------------
+c     This subroutine uses Gmsh to generate the initial mesh
+c
+c     Input:
+c       flowtype:   
+c       mxvert:     maximum number of vertices             
+c       mxnode:     maximum number of nodes
+c       mxelem:     maximum nubmer of elememts
+c       mxnbd:      maximum number of boundary nodes
+c       mxbdp:      maximum number of boundary sections
+c       ngmx:       maximum number of nodes per element
+c       ncmx:       maximum number of neighbouring elements per element
+c       rd,xd,yd:   radius and position of drop
+c       dropone:    whether phi=1 in drop phase
+c       eps:        capillary width
+c       h2,h3>h1:      mesh size at far field and at interface 
+c                       h2 for phi=1, and h3 for phi=-1   
+c       dG:         1<dG<=2. grading control in Gmsh, which is the 
+c                    size ratio between neighboring elements
+c       domsize:    largest length scale of the computational domain
+c       leniw:      length of the integer working array, 
+c                   >=MAX(nelem+nvert,(2+ngmx+ncmx)*nelem)
+c       lenrw:      length of the real(8) working array, 
+c                   >=3*nvert+nnode
+c     Output:
+c        nvert, nnode,nelem,nbd,nic: actual parameters of the mesh
+c        nbound:     number of close boundaries
+c        inod:       element description table
+c        nec:        neighboring elements
+c        x,y:        coordinates of nodes
+c        ibdnod:     indices of bounary nodes in the global node list
+c        ic:         starting position of boundary section in ibdnod
+c        nside:      number of sections in each close boundaries
+c        area:       area of elements
+c        reft:       reference number of elements
+c        aspr:       aspect ratio of elements
+c     working:
+c        iwork,rwork,dist
+c-----------------------------------------------------------------------
+c     1/8/2015, Pengtao Yue
+c-----------------------------------------------------------------------
+      use, intrinsic :: iso_c_binding, only: c_char, c_null_char
+      implicit none
+c
+      intent (in) :: flowtype,mxvert,mxnode,mxelem,mxnbd,ngmx,ncmx,
+     &               mxbdp,leniw,lenrw,h1,h2,h3,dG,rd,xd,yd,dropone,
+     &               domsize
+      intent (out):: nvert,nnode,nelem,nbd,nic,inod,nec,x,y,ibdnod,ic,
+     &               area,reft,aspr,nbound,nside,iwork,rwork,dist
+c
+      integer flowtype,mxvert,mxnode,mxelem,mxnbd,ngmx,ncmx,nvert,nnode,
+     &        nelem,nbd,nic,leniw,lenrw,mxbdp,nbound
+      integer inod(ngmx,mxelem),nec(ncmx,mxelem),ic(mxbdp+1),
+     &        ibdnod(mxnbd),iwork(leniw),reft(mxelem),nside(mxbdp)
+      real(8) rd,xd,yd,h1,h2,h3,dG,eps,domsize  
+      real(8) x(mxnode),y(mxnode),rwork(lenrw),area(mxelem),
+     &        aspr(mxelem),dist(mxvert)
+      logical dropone
+c     local variables
+      integer lphi, lenepci, lenepcr, lenorder, it
+c     gmsh related locals
+      integer order,bgm  
+      character(len=100) geofile,bgmfile,geofile_c,bgmfile_c
+      real(8) alpha, s1,s2,s3,maxtime
+c
+      write(*,'("Mesh initializing...")')
+c           
+      geofile="gmsh.geo"
+      bgmfile="gmsh.pos" 
+      geofile_c=trim(geofile)//c_null_char
+      bgmfile_c=trim(bgmfile)//c_null_char       
+      order=2
+c
+      lenepci=mxelem+mxvert
+      lenepcr=3*mxvert
+      lenorder=(2+ncmx+ngmx)*mxelem
+      lphi=1+lenepcr
+      if(leniw<max(lenepci,lenorder)) 
+     &  stop 'gmshrmsh: iwork too short (old mesh)'
+      if(lenrw<lenepcr+mxnode) 
+     &  stop 'gmshrmsh: rwork too short (old mesh)'      
+c   Generate the uniform intial mesh
+      bgm=0
+      call gmsh2d(order,bgm,geofile_c,bgmfile_c,ngmx,ncmx,
+     &            mxvert,mxnode,mxelem,mxbdp,mxnbd,
+     &            nvert,nnode,nelem,nic,nbd,nbound, 
+     &            x,y,inod,nec,ic,ibdnod,nside)      
+
+      bgm=1
+c   compute maxtime for epc
+      alpha=(dG-1)/dG
+      s1=h1*2.5
+      s2=s1+(h2-h1)/alpha
+      s3=-(s1+(h3-h1)/alpha)
+      maxtime=min(domsize,2*max(s2,s3))
+      print*, maxtime
+c      
+      do it=1,3
+      write(*,'("Vert=",i7,1x,"Node=",i7,1x,"Elem=",i7,1x,"nbd=",i7)')
+     &   nvert,nnode,nelem,nbd
+        call initphi(nvert,x,y,rwork(lphi),dropone,eps,rd,xd,yd,
+     &               flowtype)
+        call epc(nvert, nnode, nelem, ngmx, maxtime,
+     &           inod, rwork(lphi), x, y, dist,
+     &           iwork,rwork,lenepci,lenepcr)
+c       compute element size and store in rwork(1:nvert)
+        call gmshsize(nvert,dist,rwork,h1,h2,h3,dG)
+        call writebgm(nvert,nelem,ngmx,ncmx,x,y,inod,
+     &       rwork,bgmfile)
+c       compute the distance function based on phi
+        call gmsh2d(order,bgm,geofile_c,bgmfile_c,ngmx,ncmx,
+     &              mxvert,mxnode,mxelem,mxbdp,mxnbd,
+     &              nvert,nnode,nelem,nic,nbd,nbound, 
+     &              x,y,inod,nec,ic,ibdnod,nside)
+      enddo
+      write(*,'("Vert=",i7,1x,"Node=",i7,1x,"Elem=",i7,1x,"nbd=",i7)')
+     &   nvert,nnode,nelem,nbd
+c       reorder mesh elements
+      call mshreorder(nelem,ngmx,ncmx,inod,nec,iwork,lenorder)      
+c       compute apspect ratio, etc.          
+      call gmshaspr(nvert,nelem,ngmx,inod,x,y,area,reft,aspr)
+c       obtain signed distance function in a narrow band within 10*h1
+c       from the interface
+c      call initphi(nvert,x,y,rwork(lphi),dropone,eps,rd,xd,yd,
+c     &             flowtype)
+c      call epc(nvert, nnode, nelem, ngmx, 10.d0*h1,
+c     &         inod, rwork(lphi), x, y, dist,
+c     &         iwork,rwork,lenepci,lenepcr)
+c     
+
+      end      
+
+c***********************************************************************
+      subroutine gmshaspr(nvert,nelem,ngmx,inod,x,y,area,reft,aspr)
+c-----------------------------------------------------------------------      
+c   
+c   input:
+c       nvert, nelem, ngmx:   mesh parameters
+c       inod:           element description table
+c       x,y:            coordinates of mesh nodes
+c   output:
+c       area:           area of elements
+c       reft:           reference # of elements (different equations are
+c                       used in for different ref. #. For phase-field 
+c                       calculations, reft=1 for all elements)
+c       aspr:           aspect ratio of elements
+c
+c   1/8/2015,   P. Yue
+c-----------------------------------------------------------------------       
+      implicit none
+      intent(in) :: nvert, nelem, ngmx, inod, x,y
+      intent(out):: area, reft, aspr
+      integer nvert, nelem, ngmx
+      integer inod(ngmx,nelem),reft(nelem)
+      real(8) x(nvert),y(nvert),area(nelem),aspr(nelem)
+c
+      real(8), external:: xcoor
+      integer i,n1,n2,n3
+      real(8) c1,c2,c3,y1,y2,y3,x21,x31,y21,y31,tmp
+c      
+      reft(1:nelem)=1
+      do i=1,nelem
+         n1 = inod(1,i)
+         n2 = inod(2,i)
+         n3 = inod(3,i)
+         c1 = x(n1)
+         c2 = xcoor(c1,x(n2))
+         c3 = xcoor(c1,x(n3))
+         y1 = y(n1)
+         y2 = y(n2)
+         y3 = y(n3)
+         x21 = c2-c1
+         x31 = c3-c1
+         y21 = y2-y1
+         y31 = y3-y1
+         tmp = x21*y31 - y21*x31
+         area(i) = tmp
+         aspr(i) = max(x21**2+y21**2,x31**2+y31**2,
+     &                   (c3-c2)**2+(y3-y2)**2) / tmp
+         if ( tmp.le.0.d0 ) stop 'gmshaspr: negative mesh element area'
+      enddo
+      end subroutine          
+
+c***********************************************************************
+      subroutine gmshsize(nvert,dist,hsize,h1,h2,h3,dG)
+c-----------------------------------------------------------------------
+c   This subroutine computes the element size at each vertex
+c   input:
+c       nvert:  number of vertices
+c       dist:   singed distance function
+c       h1,h2,h3: mesh size at interface, phi=1, and phi=-1
+c       dG:     mesh grading
+c   output:
+c       hsize:  element size at mesh vertices
+c-----------------------------------------------------------------------
+      implicit none
+      intent(in) :: nvert, dist, h1,h2,h3,dG
+      intent(out):: hsize
+      integer nvert
+      real(8) dist(nvert),hsize(nvert),h1,h2,h3,dG
+c
+      integer i
+      real(8) s1,s2,s3,alpha
+c
+      if(dG<=1.or.dG>4)then
+        write(*,*)'gmshsize: mesh grading ratio should be in (1,4]'
+        stop
+      endif
+c     
+c      alpha=log(dG) 
+      alpha=(dG-1)/dG
+      s1=h1*2.5
+      s2=s1+(h2-h1)/alpha
+      s3=-(s1+(h3-h1)/alpha)
+c
+      do i=1,nvert
+        if(abs(dist(i))<=s1)then
+          hsize(i)=h1
+        elseif(dist(i)>0)then
+          if(dist(i)<=s2)then
+            hsize(i)=alpha*(dist(i)-s1)+h1
+          else
+            hsize(i)=h2
+          endif
+        elseif(dist(i)<0)then
+          if(dist(i)>=s3)then
+            hsize(i)=alpha*(-s1-dist(i))+h1
+          else
+            hsize(i)=h3
+          endif
+        endif
+      enddo
+      end subroutine
+
+c***********************************************************************
+      subroutine gmshlrmsh(nvert,phi,dist,h1,lrmsh)
+c-----------------------------------------------------------------------
+c   This subroutine decides whether a remeshing is required. 
+c   lrmsh=true if the phi=0 level set has moved by dh=1*h1 since last 
+c   remshing.
+c   
+c   input:
+c       nvert:  number of vertices
+c       phi:    phase-field variable
+c       dist:   signed distance function to the centerline of fine mesh
+c       h1:     element size of the fine mesh
+c   output       
+c       lrmsh:  T: remesh is required
+c
+c   1/7/2015, P. Yue
+c-----------------------------------------------------------------------   
+      implicit none
+      intent(in) :: nvert, phi, dist, h1
+      intent(out):: lrmsh
+      integer nvert
+      real(8) phi(nvert),dist(nvert),h1
+      logical lrmsh
+c   
+      integer i
+      real(8) dh
+c
+      dh=1.d0*h1
+      lrmsh=.false.
+      do i=1,nvert
+        if((phi(i)<0.and.dist(i)>dh).or.(phi(i)>0.and.dist(i)<-dh))then
+          lrmsh=.true.
+          exit
+        endif
+      enddo
+      return
+      end subroutine 
+
+

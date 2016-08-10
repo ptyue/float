@@ -1,0 +1,20 @@
+
+
+# FFLAGS -- fortran compiler options
+# CFLAGS -- C compiler options
+# ARARGS -- arguments to 'ar' unix archive
+# RANLIB -- set to 'ranlib' if there else set to 'ls'
+# LNKOPT -- option for linker
+#
+PFL_DIR = $(HOME)/results/contact_gmsh
+FC = gfortran
+CC = g++
+#FFLAGS= -fbacktrace -fbounds-check
+FFLAGS= -O3
+CFLAGS= -O 
+ARARGS= rsv
+RANLIB= ranlib
+LNKOPT=
+
+
+

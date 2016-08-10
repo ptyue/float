@@ -1,0 +1,19 @@
+
+
+# FFLAGS -- fortran compiler options
+# CFLAGS -- C compiler options
+# ARARGS -- arguments to 'ar' unix archive
+# RANLIB -- set to 'ranlib' if there else set to 'ls'
+# LNKOPT -- option for linker
+#
+#FFLAGS= -C -g
+
+FFLAGS= -32 -O -Nn22000 -sopt,-r=3, -Olimit 2048 -mips2
+CFLAGS= -32 -C -g -DUNDERSCORE -mips2
+ARARGS= rsv
+RANLIB= ls
+LNKOPT=
+#LNKOPT= /lid1u1/chang/partflow/lib/$*.a
+
+
+

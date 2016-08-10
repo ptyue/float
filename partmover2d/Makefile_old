@@ -1,0 +1,40 @@
+#
+# partflow executable makefile
+#
+# Need to set environment variables PFL_DIR (partflow directory) and 
+# PVM_ARCH (architecture of machine) (in .cshrc file) to find libraries 
+# and files.
+#
+PROG       = partflow.out
+SRC1_F     = partflow.f
+SRC2_F     = rmesh.f
+SRC_H      = ../include/parameter2d.h
+FLDIR      = -L$(PFL_DIR)/lib/$(PVM_ARCH) -L$(PETSC_DIR)/lib/libO/$(PVM_ARCH)
+LIBS       = -lflows -lblas -lpetscfortran -lpetscvec -lpetscsys -lmpiuni\
+	     -lX11 -lfpe -lm
+ALL_LIBS   = $(FLDIR) $(LIBS) 
+OBJ1_F     = $(SRC1_F:.f=.o)
+OBJ2_F     = $(SRC2_F:.f=.o)
+#
+# set machine dependent FLAGS
+#
+include $(PFL_DIR)/src/flags/copts.$(PVM_ARCH)
+#
+all : $(PROG)
+#
+.KEEP_STATE:
+#
+# define dependencies of include files
+#
+$(OBJ1_F) : $(SRC_H)
+#
+# compile programs
+#
+$(PROG): $(OBJ1_F) $(OBJ2_F) $(FULL_LIBS)
+	$(FC) $(LNKOPT) -o $(PROG) $(OBJ1_F) $(OBJ2_F) $(ALL_LIBS)
+	mv $(PROG) $(PFL_DIR)/bin/$(PROG)
+#
+clean :
+	/bin/rm -f *.o *.out
+cleanall :
+	/bin/rm -f *.o *.a *.out $(PFL_DIR)/bin/*.out $(PFL_DIR)/lib/*/*.a

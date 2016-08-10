@@ -1,0 +1,3 @@
+This code is an enhanced version of amphi, which accepts both grummp and gmsh.
+
+Currently, mesh generator is selected by setting meshgen in main program.

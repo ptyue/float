@@ -1,0 +1,43 @@
+#
+# partflow library makefile
+#
+# Need to set environment variables PFL_DIR (partflow directory) and 
+# PVM_ARCH (architecture of machine) (in .cshrc file) to find libraries 
+# and files.
+#
+LIB   = libflows.a
+SRC_F = partbc.f beginc.f shap1d.f shap2d.f forces.f front.f thin.f \
+	matnew.f pflow.f  prefro.f chkdat.f stream.f ndloc.f mshmov.f   \
+	cvnust.f mesh2d.f bdnrfn.f prtmsh.f solver.f wreslt2.f \
+	mshold.f preflw.f pstflw.f randist.f wrstrt.f \
+	update.f vortct.f xperid.f intplt.f inibd.f masbal.f \
+	collision.f matlen.f poisson.f matsld.f
+SRC_H =
+SRC_C = wreslt.c
+OBJ_F = $(SRC_F:.f=.o)
+OBJ_C = $(SRC_C:.c=.o)
+#
+# set machine dependent FLAGS
+#
+include $(PFL_DIR)/src/flags/copts.$(PVM_ARCH)
+#
+all : $(LIB)
+#
+.KEEP_STATE:
+#
+# define dependencies of include files
+#
+$(OBJ_F) : $(SRC_H)
+#
+# create library and put a copy in $(PFL_DIR)/lib/$(PVM_ARCH)
+#
+.PRECIOUS: $(LIB)
+$(LIB): $(OBJ_F) $(OBJ_C)
+	ar $(ARARGS) $@ $? 
+	mv $@ $(PFL_DIR)/lib/$(PVM_ARCH)/.
+	(cd $(PFL_DIR)/lib/$(PVM_ARCH) ; $(RANLIB) $@)
+#
+clean :
+	/bin/rm -f *.o *.a
+cleanall :
+	/bin/rm -f *.o *.a $(PFL_DIR)/lib/$(PVM_ARCH)/$(LIB)
